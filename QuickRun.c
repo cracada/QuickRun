@@ -1100,15 +1100,28 @@ static void AppendEverythingResults(HWND hDlg)
     WCHAR buf[MAX_INPUT];
     GetDlgItemTextW(hDlg, ID_EDIT, buf, MAX_INPUT);
     TrimW(buf);
-    if (!buf[0] || wcschr(buf, L' ') || wcschr(buf, L'\t')) return;
+    if (!buf[0]) return;
     if (g_matchCount >= g_maxResults) return;
     if (!g_evSetSearch || !g_evQuery || !g_evGetNum || !g_evGetPath) return;
+
+    /* '>' 前缀 = 整串直通 Everything，无任何二次加工 */
+    const WCHAR *query = buf;
+    BOOL forceQuery = FALSE;
+    if (buf[0] == L'>') {
+        query = buf + 1;
+        while (*query == L' ' || *query == L'\t') query++;
+        if (!*query) return;
+        forceQuery = TRUE;
+    }
+
+    /* 非 '>' 透传且带空格：维持原行为，不搜文件，避免噪音 */
+    if (!forceQuery && (wcschr(buf, L' ') || wcschr(buf, L'\t'))) return;
 
     WCHAR q[MAX_INPUT * 4] = { 0 };
     WCHAR extStr[MAX_INPUT + 16] = { 0 };
     WCHAR exQuery[MAX_INPUT * 2] = { 0 };
-    
-    if (g_extensions[0]) {
+
+    if (!forceQuery && g_extensions[0]) {
         wsprintfW(extStr, L" ext:%s", g_extensions);
     }
 
@@ -1133,7 +1146,7 @@ static void AppendEverythingResults(HWND hDlg)
         }
     }
 
-    _snwprintf(q, MAX_INPUT * 4 - 1, L"%s%s%s", buf, extStr, exQuery);
+    _snwprintf(q, MAX_INPUT * 4 - 1, L"%s%s%s", query, extStr, exQuery);
     q[MAX_INPUT * 4 - 1] = 0;
 
     g_evSetSearch(q);
@@ -1384,6 +1397,14 @@ static void ExecuteInput(HWND hDlg, BOOL forceFallback)
         /* 没选中列表：不管是带不带空格，绝对不查配置，去执行原文 */
     }
 
+    /* '>' 透传查询在未选中列表项（通常无结果）时，
+       不 fallback 到 cmd，避免 > 被 cmd 当成重定向创建空文件 */
+    if (!forceFallback && buf[0] == L'>' &&
+        (g_selected < 0 || g_selected >= g_matchCount)) {
+        ShowQuickToast(hDlg, L"⚠️ 未找到匹配文件", 2);
+        return;
+    }
+
     if (g_noFallback) {
         WCHAR msg[600];
         wsprintfW(msg, L"没有找到与“%s”匹配的命令。", buf);
@@ -1396,7 +1417,7 @@ static void ExecuteInput(HWND hDlg, BOOL forceFallback)
     HINSTANCE hi = ShellExecuteW(NULL, L"open", buf, NULL, NULL, SW_SHOWNORMAL);
     if ((INT_PTR)hi <= 32) {
         WCHAR cmdLine[2048];
-        wsprintfW(cmdLine, L"cmd /c %s || pause", buf);
+        wsprintfW(cmdLine, L"cmd /c %s || timeout /t 2 >nul", buf);
         STARTUPINFOW si = { 0 };
         PROCESS_INFORMATION pi = { 0 };
         si.cb = sizeof(si);
@@ -2996,7 +3017,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShow)
                 if ((INT_PTR)hi <= 32) {
                     /* 修改 3：full 最长 4095，加上 "cmd /c " 和 " || pause" 后需要约 4112 */
                     WCHAR cmdLine[4400];
-                    wsprintfW(cmdLine, L"cmd /c %s || pause", full);
+                    wsprintfW(cmdLine, L"cmd /c %s || timeout /t 2 >nul", full);
                     STARTUPINFOW si = { 0 };
                     PROCESS_INFORMATION pi = { 0 };
                     si.cb = sizeof(si);
@@ -3017,7 +3038,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShow)
                 HINSTANCE hi = ShellExecuteW(NULL, L"open", g_input, NULL, NULL, SW_SHOWNORMAL);
                 if ((INT_PTR)hi <= 32) {
                     WCHAR cmdLine[2048];
-                    wsprintfW(cmdLine, L"cmd /c %s || pause", g_input);
+                    wsprintfW(cmdLine, L"cmd /c %s || timeout /t 2 >nul", g_input);
                     STARTUPINFOW si = { 0 };
                     PROCESS_INFORMATION pi = { 0 };
                     si.cb = sizeof(si);

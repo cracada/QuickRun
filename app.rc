@@ -8,7 +8,7 @@
 
 /* ---- 版本信息块 ---- */
 1 VERSIONINFO
- FILEVERSION 1,2,0,36
+ FILEVERSION 1,2,0,50
  PRODUCTVERSION 1,2,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
@@ -26,7 +26,7 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "CR"
             VALUE "FileDescription", "QuickRun 快速启动器"
-            VALUE "FileVersion", "1.2.0.36"
+            VALUE "FileVersion", "1.2.0.50"
             VALUE "InternalName", "QuickRun"
             VALUE "LegalCopyright", "Copyright (C) 2026 CR"
             VALUE "OriginalFilename", "QuickRun.exe"
