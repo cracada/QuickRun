@@ -137,6 +137,8 @@ static int   g_listItemHeight = 32;
 static WCHAR g_extensions[MAX_INPUT] = L"exe;lnk";
 static WCHAR g_excludes[MAX_INPUT * 2] = L"C:\\Windows\\SysWOW64;C:\\Windows\\WinSxS;C:\\Windows\\SystemApps;C:\\Windows\\servicing;C:\\Windows\\Microsoft.NET";
 static BOOL  g_autoSelectFirst = TRUE;
+/* Ctrl+D 打开所在目录的命令模板；空 = 默认 explorer /select */
+static WCHAR g_openFolderCmd[2048] = { 0 };
 
 typedef struct {
     WCHAR key[MAX_INPUT];
@@ -684,6 +686,11 @@ static void EnsureConfigFileExists(void)
         L"FontSizeEdit=22\r\n"
         L"; 列表每一行的高度（默认 32）\r\n"
         L"ListItemHeight=32\r\n"
+        L"; Ctrl+D 打开所在目录用的程序；留空 = 资源管理器 + 选中文件\r\n"
+        L"; 占位符：{path} 完整路径，{dir} 所在目录\r\n"
+        L"; OpenFolderCmd=D:\\apps\\totalcmd\\TOTALCMD64.EXE /O /T /L=\"{dir}\"\r\n"
+        L"; OpenFolderCmd=\"D:\\apps\\DOpus\\dopus.exe\" /select \"{path}\"\r\n"
+        L"OpenFolderCmd=\r\n"
         L"\r\n"
         L"[Search]\r\n"
         L"; 是否启用 Everything 文件搜索（1=启用，0=禁用）\r\n"
@@ -782,6 +789,10 @@ static void LoadConfig(void)
     if (g_fontSizeEdit > 72) g_fontSizeEdit = 72;
     if (g_listItemHeight < 10) g_listItemHeight = 10;
     if (g_listItemHeight > 200) g_listItemHeight = 200;
+    
+	GetPrivateProfileStringW(L"UI", L"OpenFolderCmd", L"",
+	    g_openFolderCmd, (DWORD)(sizeof(g_openFolderCmd) / sizeof(WCHAR)), g_iniPath);
+	TrimW(g_openFolderCmd);    
 }
 
 static void LoadState(void)
@@ -2762,15 +2773,58 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp)
             return TRUE;
         }
 
-        if (id == ID_OPEN_FOLDER) {
-            if (g_selected >= 0 && g_selected < g_matchCount && g_matchCmds[g_selected][0] == 0) {
-                WCHAR arg[2048];
-                wsprintfW(arg, L"/select,\"%s\"", g_matchFullPaths[g_selected]);
-                ShellExecuteW(hDlg, L"open", L"explorer.exe", arg, NULL, SW_SHOWNORMAL);
+if (id == ID_OPEN_FOLDER) {
+    if (g_selected >= 0 && g_selected < g_matchCount && g_matchCmds[g_selected][0] == 0) {
+        const WCHAR *fp = g_matchFullPaths[g_selected];
+
+        if (!g_openFolderCmd[0]) {
+            /* 默认：资源管理器 + 选中 */
+            WCHAR arg[MAX_PATH * 2 + 16];
+            wsprintfW(arg, L"/select,\"%s\"", fp);
+            ShellExecuteW(hDlg, L"open", L"explorer.exe", arg, NULL, SW_SHOWNORMAL);
+        } else {
+            /* 自定义：替换 {path} 和 {dir}，CreateProcess 执行 */
+            WCHAR dir[MAX_PATH * 2] = { 0 };
+            const WCHAR *bs = wcsrchr(fp, L'\\');
+            if (bs) {
+                size_t d = (size_t)(bs - fp);
+                if (d < MAX_PATH * 2) { wcsncpy(dir, fp, d); dir[d] = 0; }
             }
-            SetFocus(GetDlgItem(hDlg, ID_EDIT));
-            return TRUE;
+
+            WCHAR cmdLine[4096];
+            size_t di = 0;
+            const WCHAR *p = g_openFolderCmd;
+            while (*p && di + 1 < 4096) {
+                if (wcsncmp(p, L"{path}", 6) == 0) {
+                    size_t n = wcslen(fp);
+                    if (di + n < 4096) { memcpy(cmdLine + di, fp, n * sizeof(WCHAR)); di += n; }
+                    p += 6;
+                } else if (wcsncmp(p, L"{dir}", 5) == 0) {
+                    size_t n = wcslen(dir);
+                    if (di + n < 4096) { memcpy(cmdLine + di, dir, n * sizeof(WCHAR)); di += n; }
+                    p += 5;
+                } else {
+                    cmdLine[di++] = *p++;
+                }
+            }
+            cmdLine[di] = 0;
+
+            STARTUPINFOW si = { 0 }; PROCESS_INFORMATION pi = { 0 };
+            si.cb = sizeof(si);
+            if (!CreateProcessW(NULL, cmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+                WCHAR errMsg[8192];
+                wsprintfW(errMsg, L"打开文件管理器失败：\n%s\n错误码：%lu", cmdLine, GetLastError());
+                g_inModal = TRUE;
+                MessageBoxW(hDlg, errMsg, L"错误", MB_ICONERROR);
+                g_inModal = FALSE;
+            } else {
+                CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+            }
         }
+    }
+    SetFocus(GetDlgItem(hDlg, ID_EDIT));
+    return TRUE;
+}
         return TRUE;
     }
 
